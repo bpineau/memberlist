@@ -207,7 +207,7 @@ func (m *Memberlist) streamListen() {
 
 // handleConn handles a single incoming stream connection from the transport.
 func (m *Memberlist) handleConn(conn net.Conn) {
-	m.logger.Printf("[DEBUG] memberlist: Stream connection %s", LogConn(conn))
+	m.logger.Printf("[INFO] memberlist: Stream connection %s", LogConn(conn))
 
 	defer conn.Close()
 	metrics.IncrCounter([]string{"memberlist", "tcp", "accept"}, 1)
@@ -261,7 +261,7 @@ func (m *Memberlist) handleConn(conn net.Conn) {
 			return
 		}
 
-		if err := m.mergeRemoteState(join, remoteNodes, userState); err != nil {
+		if err := m.mergeRemoteState(join, remoteNodes, userState, conn.RemoteAddr().String()); err != nil {
 			m.logger.Printf("[ERR] memberlist: Failed push/pull merge: %s %s", err, LogConn(conn))
 			return
 		}
@@ -781,7 +781,7 @@ func (m *Memberlist) sendAndReceiveState(addr string, join bool) ([]pushNodeStat
 		return nil, nil, err
 	}
 	defer conn.Close()
-	m.logger.Printf("[DEBUG] memberlist: Initiating push/pull sync with: %s", conn.RemoteAddr())
+	m.logger.Printf("[INFO] memberlist: Initiating push/pull sync with: %s", conn.RemoteAddr())
 	metrics.IncrCounter([]string{"memberlist", "tcp", "connect"}, 1)
 
 	// Send our state
@@ -1036,7 +1036,7 @@ func (m *Memberlist) readRemoteState(bufConn io.Reader, dec *codec.Decoder) (boo
 }
 
 // mergeRemoteState is used to merge the remote state with our local state
-func (m *Memberlist) mergeRemoteState(join bool, remoteNodes []pushNodeState, userBuf []byte) error {
+func (m *Memberlist) mergeRemoteState(join bool, remoteNodes []pushNodeState, userBuf []byte, addr string) error {
 	if err := m.verifyProtocol(remoteNodes); err != nil {
 		return err
 	}
@@ -1064,7 +1064,7 @@ func (m *Memberlist) mergeRemoteState(join bool, remoteNodes []pushNodeState, us
 	}
 
 	// Merge the membership state
-	m.mergeState(remoteNodes)
+	m.mergeState(remoteNodes, join, addr)
 
 	// Invoke the delegate for user state
 	if userBuf != nil && m.config.Delegate != nil {

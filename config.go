@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 type Config struct {
@@ -215,6 +217,11 @@ type Config struct {
 	// This is a legacy name for backward compatibility but should really be
 	// called PacketBufferSize now that we have generalized the transport.
 	UDPBufferSize int
+
+	// Circuit-breaker for suspectMsg sent after mergeState
+	SuspicionRateLimit   rate.Limit
+	SuspicionMaxBurst    int
+	SuspicionRateEnforce bool
 }
 
 // DefaultLANConfig returns a sane set of configurations for Memberlist.
@@ -258,6 +265,10 @@ func DefaultLANConfig() *Config {
 
 		HandoffQueueDepth: 1024,
 		UDPBufferSize:     1400,
+
+		SuspicionRateLimit:   rate.Inf,
+		SuspicionMaxBurst:    2000,
+		SuspicionRateEnforce: false,
 	}
 }
 

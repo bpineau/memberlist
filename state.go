@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/armon/go-metrics"
+	"golang.org/x/time/rate"
 )
 
 type nodeStateType int
@@ -416,6 +417,7 @@ func (m *Memberlist) probeNode(node *nodeState) {
 	// No acks received from target, suspect it as failed.
 	m.logger.Printf("[INFO] memberlist: Suspect %s has failed, no acks received", node.Name)
 	s := suspect{Incarnation: node.Incarnation, Node: node.Name, From: m.config.Name}
+	metrics.IncrCounter([]string{"memberlist", "suspicion", "local"}, 1)
 	m.suspectNode(&s)
 }
 
@@ -564,7 +566,7 @@ func (m *Memberlist) pushPullNode(addr string, join bool) error {
 		return err
 	}
 
-	if err := m.mergeRemoteState(join, remote, userState); err != nil {
+	if err := m.mergeRemoteState(join, remote, userState, addr); err != nil {
 		return err
 	}
 	return nil
@@ -1163,10 +1165,13 @@ func (m *Memberlist) deadNode(d *dead) {
 
 // mergeState is invoked by the network layer when we get a Push/Pull
 // state transfer
-func (m *Memberlist) mergeState(remote []pushNodeState) {
+func (m *Memberlist) mergeState(remote []pushNodeState, join bool, addr string) {
+	var alives, deads, suspects float32
+	logged := false
 	for _, r := range remote {
 		switch r.State {
 		case stateAlive:
+			alives++
 			a := alive{
 				Incarnation: r.Incarnation,
 				Node:        r.Name,
@@ -1178,12 +1183,29 @@ func (m *Memberlist) mergeState(remote []pushNodeState) {
 			m.aliveNode(&a, nil, false)
 
 		case stateDead:
+			deads++
 			// If the remote node believes a node is dead, we prefer to
 			// suspect that node instead of declaring it dead instantly
 			fallthrough
 		case stateSuspect:
+			suspects++
+			if !join && !m.suspicionLimiter.Load().(*rate.Limiter).Allow() {
+				if !logged {
+					metrics.IncrCounter([]string{"memberlist", "ratelimited"}, 1)
+					m.logger.Printf("[WARN] memberlist: suspicion rate exceeded (merging from %s)", addr)
+					logged = true
+				}
+				if m.suspicionRateEnforce {
+					continue
+				}
+			}
 			s := suspect{Incarnation: r.Incarnation, Node: r.Name, From: m.config.Name}
 			m.suspectNode(&s)
 		}
 	}
+
+	metrics.SetGauge([]string{"memberlist", "mergestate", "alives"}, alives)
+	metrics.SetGauge([]string{"memberlist", "mergestate", "deads"}, deads)
+	metrics.SetGauge([]string{"memberlist", "mergestate", "suspects"}, suspects-deads)
+	m.logger.Printf("[INFO] memberlist: merged from %v alives:%f deads:%f suspects:%f", addr, alives, deads, suspects-deads)
 }

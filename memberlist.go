@@ -29,6 +29,7 @@ import (
 	multierror "github.com/hashicorp/go-multierror"
 	sockaddr "github.com/hashicorp/go-sockaddr"
 	"github.com/miekg/dns"
+	"golang.org/x/time/rate"
 )
 
 type Memberlist struct {
@@ -70,6 +71,9 @@ type Memberlist struct {
 	broadcasts *TransmitLimitedQueue
 
 	logger *log.Logger
+
+	suspicionLimiter     atomic.Value
+	suspicionRateEnforce bool
 }
 
 // BuildVsnArray creates the array of Vsn
@@ -188,7 +192,11 @@ func newMemberlist(conf *Config) (*Memberlist, error) {
 		ackHandlers:          make(map[uint32]*ackHandler),
 		broadcasts:           &TransmitLimitedQueue{RetransmitMult: conf.RetransmitMult},
 		logger:               logger,
+		suspicionRateEnforce: conf.SuspicionRateEnforce,
 	}
+
+	m.suspicionLimiter.Store(rate.NewLimiter(conf.SuspicionRateLimit, conf.SuspicionMaxBurst))
+
 	m.broadcasts.NumNodes = func() int {
 		return m.estNumNodes()
 	}
@@ -665,4 +673,10 @@ func (m *Memberlist) hasShutdown() bool {
 
 func (m *Memberlist) hasLeft() bool {
 	return atomic.LoadInt32(&m.leave) == 1
+}
+
+func (m *Memberlist) ReloadSuspicionRateLimiter(limit rate.Limit, burst int, enforced bool) {
+	m.suspicionRateEnforce = enforced
+	m.suspicionLimiter.Store(rate.NewLimiter(limit, burst))
+	m.logger.Printf("[INFO] memberlist: reload suspectrate: %v,%v,%v", limit, burst, enforced)
 }
